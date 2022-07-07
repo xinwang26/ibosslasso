@@ -1,0 +1,138 @@
+#######################################################################
+#Author: Xin Wang
+#Initial Date: Wed Apr 27 23:09:32 2016
+#Program Description: this program perform ranking then regression with subset, using all regular R data structure and regular lasso package (not big matrix)
+#Completed: No
+#Dependencies:
+#Main Reference:
+#Input:
+#Output:
+#######################################################################
+args <- commandArgs(trailingOnly = TRUE)
+(n = as.numeric(args[1]))
+(p = as.numeric(args[2]))
+(n_true = as.numeric(args[4]))
+(subsize = as.numeric(args[3]))
+setwd("/home/wjin3/code/tocopy")
+library(data.table)
+library(Metrics)
+library(foreach)
+library(doParallel)
+registerDoParallel(4)
+library(lars)
+library(glmnet)
+source("data_Gen.R",echo = F)
+#this contains functions for the ranking and selecting
+source("data_table_funcs_fast.R",echo = F)
+#library(irlba)
+source("implement_module_fast.R",echo = F)
+#library(irlba)
+args <- commandArgs(trailingOnly = TRUE)
+if(length(args)<3){Error("wrong input!")} 
+(datetime = substr(Sys.time(),6,19))
+
+test_size = 1000
+cor_prop = 0.2
+rounds = 100
+set.seed(4)
+islasso = 1 #parameter for lasso or ridge or glmnet
+seed1_list = sample(1:99999,rounds)
+seed2_list = sample(99999:199999,rounds)
+seed3_list = sample(200000:299999,rounds)
+seed4_list = sample(300000:399999,rounds)
+seed4_list = sample(400000:499999,rounds)
+seed5_list = sample(500000:599999,rounds)
+seed6_list = sample(600000:699999,rounds)
+(scale_beta  = sqrt(log(p)/subsize)/1.5)#necessary for data generation
+
+X_distribution = "fast_t"
+data_gen = data_gen_t
+sigma1 = 1 #scale of error
+source("evaluation.R") # the evaluation function test-mse will rely on the distribution of predictors
+#to store result
+repo_all = data.frame()
+repo_cor100 = data.frame()
+repo_cor200 = data.frame()
+repo_cor50 = data.frame()
+repo_rand = data.frame()
+repo_lev = data.frame()
+repo_full = data.frame()
+ptm = proc.time()
+
+cat("everything normal!")
+for(i in 1:rounds)
+{
+  seed1 = seed1_list[i]#for x generation
+  seed2 = seed2_list[i]#for beta generation
+  seed3 = seed3_list[i]#for y generation
+  seed4 = seed4_list[i]#for test x generation
+  seed5 = seed5_list[i]#for test y generation
+  seed6 = seed6_list[i]#for leverage sampling
+  
+  #generate the training data
+  system.time(x <- data_gen(seed1))
+  system.time(beta <- para_gen(seed2))
+  true_beta = c(0,beta)
+  system.time(x_mat <- as.matrix(x[,paste0("V",1:p),with=F]))
+  set.seed(seed3)
+  y <-  as.matrix(x_mat)%*%beta+rnorm(n,0,sigma1)  
+  
+  #generate the test data
+  x_test <- data_gen(seed4,n_full = test_size)
+  x_test <- as.matrix(x_test[,paste0("V",1:p),with=F])
+  set.seed(seed5)
+  y_test <- x_test%*%beta+rnorm(test_size,0,sigma1) 
+  y_true <- x_test%*%beta  
+  #x,x_mat,y,x_test,y_test will be used in all functions from now, passing by global environment
+  
+  #IBOSS subset and its lasso regression
+  #lasso_all = reg_module("all")
+  lasso_cor100 = reg_module("cor",r=100/p)
+  lasso_cor200 = reg_module("cor",r=200/p)
+  lasso_cor50 = reg_module("cor",r=50/p)
+  #lasso_lev = reg_module("lev",seed6)
+  lasso_full = reg_module("full")
+  lasso_random = reg_module("rand")
+  
+  
+  #row_all = eval_module(lasso_all)
+  row_cor100 = eval_module(lasso_cor100)
+  row_cor200 = eval_module(lasso_cor200)
+  row_cor50 = eval_module(lasso_cor50)
+  #row_lev = eval_module(lasso_lev)
+  row_full = eval_module(lasso_full)
+  row_rand = eval_module(lasso_random)
+  
+  #repo_all = rbind(repo_all,row_all)
+  repo_cor100 = rbind(repo_cor100,row_cor100)
+  repo_cor200 = rbind(repo_cor200,row_cor200)
+  repo_cor50 = rbind(repo_cor50,row_cor50)
+  #repo_lev = rbind(repo_lev,row_lev)
+  repo_full = rbind(repo_full,row_full)
+  repo_rand = rbind(repo_rand,row_rand)
+  
+}
+
+method_string = c("full",
+                  "cor100",
+                  "cor200",
+                  "cor50",
+                  #"lev",
+                  "rand")
+output = data.frame()
+for (m in method_string)
+{
+  output = rbind(output,
+                 reportmean_module(get(paste0("repo_",m)))
+  )}
+rownames(output) = method_string
+total_time = (proc.time()- ptm)[3]
+conditions = data.frame("__",X_distribution,rounds,n,p,n_true,scale_beta,subsize,total_time,test_size)
+print(conditions)
+print(output)
+cat("total time is:",total_time)
+#output to csv
+write.table("",sep=",",file= paste0("reg_R_result_table",datetime,".csv"))
+write.table(conditions,sep=",",file = paste0("reg_R_result_table",datetime,".csv"),append=T,col.names = T,row.names = T)
+write.table(output,sep = ",",file = paste0("reg_R_result_table",datetime,".csv"),append = T,col.names = T,row.names = T)
+
